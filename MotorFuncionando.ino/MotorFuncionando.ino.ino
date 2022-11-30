@@ -8,7 +8,7 @@ For use with the Adafruit Motor Shield v2
 */
 
 #include <Adafruit_MotorShield.h>
-#include <Servo.h>
+#include <SoftwareSerial.h>   
 
 // Create the motor shield object with the default I2C address
 Adafruit_MotorShield AFMS = Adafruit_MotorShield();
@@ -20,18 +20,18 @@ Adafruit_DCMotor *myMotor1 = AFMS.getMotor(1);
 Adafruit_DCMotor *myMotor2 = AFMS.getMotor(2);
 // You can also make another motor on port M2
 //Adafruit_DCMotor *myOtherMotor = AFMS.getMotor(2);
+SoftwareSerial BT(10,11);
 
-
-Servo servo1;
-//SENSOR 1
+//SENSOR 2
 #define echoPin 2 
 #define trigPin 4
-//SENSOR 2
+//SENSOR 1
 #define echoPin2 7 
 #define trigPin2 6
 //otros
 #define salida 13
-
+#define ledPin 13
+#define NROBOT 1
 
 //CALCULO DISTANCIAS CON LOS SENSORES
 int sensor1(){
@@ -60,7 +60,11 @@ int sensor2(){
   return distancia;
 }
 
+unsigned char * mensaje;
+unsigned char *buffer;
+
 void setup() {
+  BT.begin(9600);  //AT1:9600 AT2:38400  
   Serial.begin(9600); // set up Serial library at 9600 bps
   Serial.println("Adafruit Motorshield v2 - DC Motor test!");
   servo1.attach(10);
@@ -71,6 +75,7 @@ void setup() {
   pinMode(salida, OUTPUT);
   pinMode(8, INPUT);
   digitalWrite(salida,HIGH);
+  
   
 
   if (!AFMS.begin()) { // create with the default frequency 1.6KHz
@@ -89,20 +94,55 @@ void setup() {
   myMotor2->run(RELEASE);
 }
 
-//ESTADOS
-#define DETCARGAR 0
-#define DETDESCARGAR 1
+int st_buffer = -1, n=0;
+void recibir_mensaje(){
+  unsigned char aux=0;
+  if (BT.available()) {
+    aux = BT.read();
+    if (st_buffer==0 && aux=='}'){
+       st_buffer=1;
+       for (int i=0; i<n; i++)
+        mensaje[i]=buffer[i];
+       n=0;              
+    }  
 
+    if (st_buffer==0 && aux!='}'){
+      buffer[n] = aux;
+      n++;
+    }
+   if (st_buffer==-1 && aux=='{'){
+       st_buffer=0;
+    }  
+
+
+  }
+}
+unsigned char c;
+
+//ESTADOS
+#define INICIO 0
+#define G1 1 // avanza hacia grua 1
+#define E1 2 // espera la carga de grua 1
+#define G2 3 // avanza hacia grua 2
+#define E2 4 // espera la descarga de grua 2
+#define W 5 // warning de distancia
+
+// ESTADOS INTERNOS
+#define cargado 6
+#define descargado 7
 #define salida 13
 
-#define AVANZA 2
-#define RETROCEDE 3
-int ESTADO = AVANZA;
+int st_carrito = descargado;
+int ESTADO = INICIO;
 int DISTANCIA;
 int DISTANCIA2;
 int buttonState;
 
+// BUFFER = [GRUA1,GRUA2,ROBOT1,ROBOT2]
+//
+// 1 = DISPONIBLE Y 0 = FIN
 void loop() {
+
   DISTANCIA = sensor1();
   DISTANCIA2 = sensor2();
   buttonState = digitalRead(8);
@@ -111,37 +151,41 @@ void loop() {
   Serial.println(buttonState);
   Serial.println(ESTADO);
   Serial.println("----------------");
+  recibir_mensaje()  
 
-
-  if (DISTANCIA<10){
-       ESTADO = DETCARGAR;
+  if (DISTANCIA<20 ){
+       ESTADO = W;
   }
 
-  if ( DISTANCIA2<10){
-       ESTADO = DETDESCARGAR;
+  if (DISTANCIA<20 && mensaje[0] == 1 && st_carrito == descargado){
+      ESTADO = E1;       
+  }
+  if (DISTANCIA<20 && mensaje[0] == 0 && st_carrito == descargado){
+      ESTADO = G2;
+      st_carrito = cargado;       
   }
 
-  if (ESTADO==DETCARGAR || ESTADO==DETDESCARGAR){
+  if (DISTANCIA2<20 && mensaje[1] == 1 && st_carrito == cargado){
+      ESTADO = E2;     
+  }
+  if (DISTANCIA2<20 && mensaje[1] == 0 && st_carrito == cargado){
+      ESTADO = G1;
+      st_carrito = descargado;       
+  }
+
+  if(ESTADO == E1 || ESTADO == E2 || ESTADO==W){
       myMotor1->run(RELEASE);
-      myMotor2->run(RELEASE);       
-  }
+      myMotor2->run(RELEASE); 
+  }  
 
-  if (ESTADO == DETCARGAR && buttonState == 1){
-      ESTADO = AVANZA;
-  }
-
-  if (ESTADO==DETDESCARGAR && buttonState == 1){
-      ESTADO = RETROCEDE;
-  }
-
-  if(ESTADO == AVANZA){
+  if(ESTADO == G2){
     myMotor1->run(BACKWARD);
     myMotor2->run(BACKWARD);
     myMotor1->setSpeed(70);
     myMotor2->setSpeed(70);
   }  
 
-  if (ESTADO == RETROCEDE) {
+  if (ESTADO == G1) {
     myMotor1->run(FORWARD);
     myMotor2->run(FORWARD);
     myMotor1->setSpeed(70);
